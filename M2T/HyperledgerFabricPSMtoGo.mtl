@@ -1,0 +1,137 @@
+[comment encoding = UTF-8 /]
+[module HyperledgerFabricPSMtoGo('http://www.eclipse.org/uml2/5.0.0/UML/Profile/Standard','http://www.eclipse.org/uml2/5.0.0/UML','http://www.eclipse.org/uml2/5.0.0/Types')]
+
+[template public HyperledgerFabricPSMtoGo(model : Model)] 
+[file (model.name.concat('.go'), false)]
+package chaincode
+import (
+	"encoding/json"
+	"github.com/hyperledger/fabric-contract-api-go/contractapi"
+)
+[for (e : Element | model.ownedElement)][let c : Class = e]
+type [c.name/] struct {
+	contractapi.Contract
+}
+[for (p : Property | c.ownedAttribute)]
+[if (p.isStereotypeApplied(Constant))]
+const [p.type.name/] [p.visibility/] = [p.default/]
+[elseif (p.isStereotypeApplied(Variable))]
+var [p.name/] [p.type.name/] [if (p.isSetDefault())] = [p.default/] [/if]
+[/if]
+[/for]
+[for (cn : Class | c.ownedElement->filter(Class))]
+type [cn.name/] struct{
+	[for (p : Property | cn.attribute)]
+	[p.name/] [p.type.name/] 'json:"[p.name/]"'
+	[/for]
+}
+[/for]
+[for (sm : StateMachine | c.ownedBehavior->filter(StateMachine))][for (r : Region | sm.region)][for (it : Transition | r.transition)][for (x : Trigger | it.trigger)][let var : CallEvent = x.event]
+[if (r.transition.trigger.event->exists(e: Event | e.oclAsType(CallEvent).operation = var.operation)._not())]
+[for (o : Operation | c.ownedOperation)]
+func (s *[c.name/]) [o.name/] ([for (pr : Parameter | o.ownedParameter) separator(', ') ?(not(pr.direction = ParameterDirectionKind::return))][pr.name/] [pr.type.name/][/for]) [for (pr : Parameter | o.ownedParameter)  ?((pr.direction = ParameterDirectionKind::return))][pr.type.name/][/for] {
+	[for (b : Behavior | o.method)]
+	[let it : Interaction = b] [interactionFragment2Expression(it.fragment)/]
+	[elselet  it : OpaqueBehavior = b][it._body/][/let]
+	[/for]
+[/for]
+}
+[/if]
+[/let][/for][/for][/for][/for]
+[stateMachinetoFunctions(c)/]
+[if (c.isStereotypeApplied(Chaincode).superClass->notEmpty())][c.superClass.toString()/] [/if][/let]
+[/for]
+[/file]
+[/template]
+
+[template public combinedFragment2Operands(cf : CombinedFragment)]
+[for (io : InteractionOperand | cf.operand)]
+[if (cf.interactionOperator = InteractionOperatorKind::alt)][altf(io)/]
+[elseif (cf.interactionOperator = InteractionOperatorKind::loop)][loopf(io, cf.ancestors(CombinedFragment)->select(a: CombinedFragment | a.interactionOperator = InteractionOperatorKind::loop)->size())/]
+[elseif (cf.interactionOperator = InteractionOperatorKind::opt)][optf(io)/]
+[/if][interactionFragment2Expression(io.fragment)/][/for][/template]
+
+[template public interactionFragment2Expression(fragments: OrderedSet(InteractionFragment))]
+[for (inf : InteractionFragment | fragments)]
+[let mos : MessageOccurrenceSpecification = self]
+	[if (mos.message.receiveEvent.message = mos.message.sendEvent.message)][mos(mos)/][/if]
+[elselet  cf : CombinedFragment = self]
+	[combinedFragment2Operands(cf)/]}
+[/let][/for][/template]
+
+[template public mos(mos: MessageOccurrenceSpecification)]
+[if (mos.message.messageSort = MessageSort::reply and mos.message.receiveEvent.oclIsKindOf(Gate))]stub.return("[mos.message.name/]")[elseif (mos.message.messageSort = MessageSort::createMessage)][let m: MessageOccurrenceSpecification = mos.message.receiveEvent]var [mos.covered.represents.name/] [let p: Parameter = m.covered.represents] [if (p.isMultivalued())][ '[' /][ ']' /][/if][/let] [mos.covered.represents.type.name/][/let][elseif (mos.message.messageSort = MessageSort::synchCall and mos.message.receiveEvent = mos and not(mos.message.sendEvent.oclIsKindOf(Gate)))][sm(mos.message)/][/if][/template]
+[template public sm(m : Message)]
+[let op : Operation = m.signature]
+[if (m.argument->size() = op.ownedParameter->size())][if (op.ownedParameter->any(p | p.direction = ParameterDirectionKind::return)->notEmpty())][m.argument->last().stringValue()/] := [/if][op.name/]([for (oe : ValueSpecification | m.argument) separator(', ') ? (not(op.ownedParameter->at(m.argument->indexOf(oe)).direction = ParameterDirectionKind::return)) ][oe.stringValue()/][/for])
+if err != nil {
+		return nil, err
+	}
+[else][if (op.ownedParameter->any(p | p.direction = ParameterDirectionKind::return)->notEmpty())][op.ownedParameter->last().name/] := [/if][op.name/]([for (pr : Parameter | op.ownedParameter) separator(', ') ? (not(self.direction = ParameterDirectionKind::return)) ][pr.name/][/for])
+if err != nil {
+	return err
+}[/if]
+[else][m.name/][/let]
+[/template]
+[template public altf(operand : InteractionOperand)]
+[if (operand.precedingSiblings()->isEmpty())]if([operand.guard.specification.stringValue()/]){[elseif (operand.followingSiblings()->isEmpty())]}else{[else]}else if([operand.guard.specification.stringValue()/]){[/if][/template]
+[template public loopf(operand : InteractionOperand, int : Integer)]
+[if (operand.guard.specification->notEmpty())]for ([operand.guard.specification.stringValue()/])[elseif (operand.guard.minint->notEmpty())]for ['i'+int/] := 0; ['i'+int/] <[operand.guard.minint.stringValue()/] ['i'+int/]++[/if]{[/template]
+[template public optf(operand : InteractionOperand)]
+if([operand.guard.specification.stringValue()/]){[/template]
+[template public breakf(operand : InteractionOperand)]
+if([operand.guard.specification.stringValue()/]){
+[interactionFragment2Expression(operand.fragment)/][/template]
+
+[template public stateMachinetoFunctions(c : Class)]
+[let sm : StateMachine = c.classifierBehavior][for (r : Region | sm.region)][for (it : Transition | r.transition)][for (x : Trigger | it.trigger)][let var : CallEvent = x.event]
+func (s *[var.operation.name/]) [var.operation.name/] ([for (pr : Parameter | var.operation.ownedParameter) separator(', ') ?(not(pr.direction = ParameterDirectionKind::return))][pr.name/] [pr.type.name/][/for]) [for (pr : Parameter | var.operation.ownedParameter)  ?((pr.direction = ParameterDirectionKind::return))][pr.type.name/][/for] {
+{
+[r.transition->reject(r.transition.trigger.event->exists(e: Event | e.oclAsType(CallEvent).operation = var.operation))->size()/]
+[ExtendOperation(it.container.transition->select(it.container.transition.trigger.event->exists(e: Event | e.oclAsType(CallEvent).operation = var.operation)))/]
+[/let][/for][/for][/for][/let]
+[/template]
+
+[template public ExtendOperation(set : Set(Transition))]
+[for (it : Transition | set)]
+[for (s : Trigger | it.trigger)][let c : CallEvent = s.event]
+[for (var : Vertex | set.source)]
+[let s : State = var]
+if [c.operation.namespace/].State=="[s.name/]" [if (it.guard->notEmpty())] && [it.guard.specification/][/if]
+[elselet p : Pseudostate = var]
+	[if (p.kind = PseudostateKind::junction)]
+if ([for (ct : Transition | p.incoming) separator('|| ')]
+	[c.operation.namespace/].State=="[ct.source.name/]" [if (ct.guard->notEmpty())] && [ct.guard.specification/][/if]
+	[/for])
+	[elseif (p.kind = PseudostateKind::initial)][/if]
+[/let]
+[/for]
+[for (var : Behavior | c.operation.method)]
+[let ob : OpaqueBehavior = var]
+[ob._body->first().substring(1, sin(ob._body->first())-1)/]
+[/let]
+[/for]
+[for (var : Vertex | set.target)]
+[if (set.target->count(Vertex) > 1)]
+if [c.operation.namespace/].State=="[it.source.name/]" [if (it.guard->notEmpty())] && [it.guard.specification/][/if]
+[/if]
+[let p : Pseudostate = var]
+[if (p.kind = PseudostateKind::junction or p.kind = PseudostateKind::choice)]
+	[for (ct : Transition | p.outgoing)]
+	[if (ct.precedingSiblings()->isEmpty())]if([ct.guard.specification.stringValue()/]){[elseif (ct.followingSiblings()->isEmpty())]} else {[else]} else if([ct.guard.specification.stringValue()/]){[/if]
+	[if (ct.effect->notEmpty() and ct.effect.oclIsKindOf(OpaqueBehavior))] [ct.effect.specification/][/if]
+	[if (not(ct.target=it.source))] [c.operation.namespace/].State="[ct.target.name/]"[/if]
+	[/for]
+	[elseif (p.kind = PseudostateKind::initial)]
+	[/if]
+[elselet s : State = var]
+	[if (it.effect->notEmpty() and it.effect.oclIsKindOf(OpaqueBehavior))] [it.effect.specification/][/if] 
+	[if (not(it.target=it.source))] [c.operation.namespace/].State="[it.target.name/]"[/if]
+[/let]
+[/for]
+[for (var : Behavior | c.operation.method)]
+[let ob : OpaqueBehavior = var][ob._body->first().substring(sin(ob._body->first()))/][/let]
+[/for]
+[/let][/for][/for]
+[/template]
+[query public sin(arg : String) : Integer = arg.indexOf('return')/]
